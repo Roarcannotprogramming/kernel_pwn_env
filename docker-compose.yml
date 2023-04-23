@@ -1,0 +1,13 @@
+version: '2.2'
+
+services:
+    kernel_debug:
+        build: ./
+        volumes: 
+            - ./exp:/root/exp
+            - ./corescripts:/root/corescripts:ro
+            - ./pwn:/root/pwn
+        network_mode: host
+        privileged: true
+        restart: unless-stopped
+        

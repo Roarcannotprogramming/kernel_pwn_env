@@ -8,6 +8,8 @@ services:
             - ./exp:/root/exp
             - ./corescripts:/root/corescripts
             - ./pwn:/root/pwn
+        environment:
+            - LC_CTYPE=C.UTF-8
         network_mode: host
         privileged: true
         restart: unless-stopped

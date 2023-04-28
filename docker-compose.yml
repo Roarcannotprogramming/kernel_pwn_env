@@ -3,9 +3,10 @@ version: '2.2'
 services:
     kernel_debug:
         build: ./
+        container_name: kernel_debug
         volumes: 
             - ./exp:/root/exp
-            - ./corescripts:/root/corescripts:ro
+            - ./corescripts:/root/corescripts
             - ./pwn:/root/pwn
         network_mode: host
         privileged: true

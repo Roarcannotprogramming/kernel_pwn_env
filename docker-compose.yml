@@ -8,8 +8,10 @@ services:
             - ./exp:/root/exp
             - ./corescripts:/root/corescripts
             - ./pwn:/root/pwn
+            - ./gdb_internal.sh:/gdb_internal.sh
         environment:
             - LC_CTYPE=C.UTF-8
+            - WORKDIR=/root/pwn
         network_mode: host
         privileged: true
         restart: unless-stopped

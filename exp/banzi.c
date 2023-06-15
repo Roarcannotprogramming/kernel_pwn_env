@@ -636,29 +636,29 @@ uint64_t page_to_physic(uint64_t page) {
  * 
  */
 
-__attribute__((naked)) pid_t __clone(uint64_t flags, void *dest)
-{
-    __asm__ __volatile__(
-        ".intel_syntax noprefix;\n"
-        "mov r15, rsi;\n"
-        "xor rsi, rsi;\n"
-        "xor rdx, rdx;\n"
-        "xor r10, r10;\n"
-        "xor r9, r9;\n"
-        "mov rax, 56;\n"
-        "syscall;\n"
-        "cmp rax, 0;\n"
-        "jl bad_end;\n"
-        "jg good_end;\n"
-        "jmp r15;\n"
-        "bad_end:\n"
-        "neg rax;\n"
-        "ret;\n"
-        "good_end:\n"
-        "ret;\n"
-        ".att_syntax prefix;\n"
-    );
-}
+// __attribute__((naked)) pid_t __clone(uint64_t flags, void *dest)
+// {
+//     __asm__ __volatile__(
+//         ".intel_syntax noprefix;\n"
+//         "mov r15, rsi;\n"
+//         "xor rsi, rsi;\n"
+//         "xor rdx, rdx;\n"
+//         "xor r10, r10;\n"
+//         "xor r9, r9;\n"
+//         "mov rax, 56;\n"
+//         "syscall;\n"
+//         "cmp rax, 0;\n"
+//         "jl bad_end;\n"
+//         "jg good_end;\n"
+//         "jmp r15;\n"
+//         "bad_end:\n"
+//         "neg rax;\n"
+//         "ret;\n"
+//         "good_end:\n"
+//         "ret;\n"
+//         ".att_syntax prefix;\n"
+//     );
+// }
 
 int rootfd[2];
 struct timespec timer = {.tv_sec = 1000000000, .tv_nsec = 0};

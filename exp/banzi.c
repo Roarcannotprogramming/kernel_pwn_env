@@ -336,7 +336,7 @@ static void *userfault_handler_example(void *arg) {
             sleep(2);
         } else {
             // TODO: read
-            printf("[-] triggering write fault\n");
+            printf("[-] triggering read fault\n");
             sleep(2);
 
             fault_cnt++;

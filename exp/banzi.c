@@ -357,6 +357,35 @@ static void *userfault_handler_example(void *arg) {
  * https://syst3mfailure.io/corjail
  */
 
+static long keyctl(int cmd, ...) {
+  va_list va;
+  va_start(va, cmd);
+  unsigned long arg2 = va_arg(va, unsigned long);
+  unsigned long arg3 = va_arg(va, unsigned long);
+  unsigned long arg4 = va_arg(va, unsigned long);
+  unsigned long arg5 = va_arg(va, unsigned long);
+  va_end(va);
+  return syscall(__NR_keyctl, cmd, arg2, arg3, arg4, arg5);
+}
+
+long keyctl_revoke(key_serial_t id) {
+  return keyctl(KEYCTL_REVOKE, id);
+}
+
+long keyctl_unlink(key_serial_t key, key_serial_t keyring) {
+  return keyctl(KEYCTL_UNLINK, key, keyring);
+}
+
+key_serial_t add_key(const char* type, const char* description, const void* payload,
+                     size_t payload_length, key_serial_t ring_id) {
+  return syscall(__NR_add_key, type, description, payload, payload_length, ring_id);
+}
+
+long keyctl_read(key_serial_t key, char *buffer, size_t buflen) {
+	return syscall(__NR_keyctl, KEYCTL_READ, key, buffer, buflen);
+}
+
+
 int alloc_key(int id, char *buff, size_t size) {
     char desc[256] = {0};
     char *payload;

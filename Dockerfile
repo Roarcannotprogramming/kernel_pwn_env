@@ -2,6 +2,8 @@ FROM debian:bookworm
 
 COPY sources.list /etc/apt/sources.list
 
+RUN rm -rf /etc/apt/sources.list.d/*
+
 RUN apt update && \
     DEBIAN_FRONTEND=noninteractive apt install -y wget zstd curl git liburing-dev gdb qemu-system python3 python3-pip ipython3 tree procps musl musl-tools musl-dev libkeyutils-dev
 

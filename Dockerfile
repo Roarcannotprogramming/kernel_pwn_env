@@ -9,6 +9,8 @@ RUN apt update && \
 
 RUN apt build-dep -y linux || apt install -f
 
+RUN apt install -y libelf-dev libssl-dev bison flex bc
+
 RUN git clone https://github.com/pwndbg/pwndbg && \
     cd pwndbg && \
     ./setup.sh 
